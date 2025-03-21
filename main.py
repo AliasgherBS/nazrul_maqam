@@ -279,7 +279,7 @@ def auto_donate(db: Session = Depends(get_db)):
                 date=current_date,
                 amount=user.daily_amount,
                 is_automatic=True,
-                comment="Automatic daily donation"
+                comment="Automatic daily contribution"
             )
             db.add(donation)
             donations_added += 1
