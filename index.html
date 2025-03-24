@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nazrul Maqam 1447H Tracker</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+    <link rel="manifest" href="/site.webmanifest">
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <!-- Add a simple error handler for script loading -->
+    <script>
+        window.addEventListener('error', function(e) {
+            if (e.filename && (e.filename.includes('script.js') || e.filename.includes('chart.min.js'))) {
+                console.error('Script loading error:', e);
+                const errorDiv = document.createElement('div');
+                errorDiv.style.backgroundColor = '#ffebee';
+                errorDiv.style.color = '#c62828';
+                errorDiv.style.padding = '10px';
+                errorDiv.style.margin = '10px';
+                errorDiv.style.borderRadius = '4px';
+                errorDiv.textContent = 'Error loading scripts. Please check your browser console for details.';
+                document.body.prepend(errorDiv);
+            }
+        }, true);
+    </script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><i class="fas fa-hand-holding-heart"></i> Nazrul Maqam 1447H</h1>
+        </header>
+
+        <section class="summary-section">
+            <div class="summary-box">
+                <h3>Total</h3>
+                <div class="summary-amount" id="total-all-time">0/-</div>
+                <div class="summary-label">All Time</div>
+            </div>
+            <div class="summary-box">
+                <h3>This Month</h3>
+                <div class="summary-amount" id="total-this-month">0/-</div>
+                <div class="summary-label">Monthly Progress</div>
+            </div>
+            <!--<div class="summary-box">-->
+            <!--    <h3>This Year</h3>-->
+            <!--    <div class="summary-amount" id="total-this-year">0/-</div>-->
+            <!--    <div class="summary-label">Yearly Impact</div>-->
+            <!--</div>-->
+        </section>
+
+        <section class="settings-section">
+            <div class="settings-container">
+                <h2><i class="fas fa-cog"></i> Daily Amount Settings</h2>
+                <div class="setting-item">
+                    <div class="current-amount">
+                        <span>Current Daily Amount: </span>
+                        <strong id="current-daily-amount">38/-</strong>
+                        <button id="show-change-settings" class="btn text-btn">
+                            <i class="fas fa-edit"></i> Change
+                        </button>
+                    </div>
+                    <div id="change-amount-form" class="change-amount-form hidden">
+                        <label for="daily-amount">New Amount (PKR): </label>
+                        <input type="number" id="daily-amount" min="0" step="1">
+                        <button id="save-settings" class="btn primary">Save</button>
+                        <button id="cancel-settings" class="btn text-btn">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        
+        <section class="add-donation-section">
+            <h2><i class="fas fa-plus-circle"></i> Add Contribution</h2>
+            <form id="donation-form">
+                <div class="form-group">
+                    <label for="donation-amount">Amount (PKR): </label>
+                    <input type="number" id="donation-amount" min="1" step="1" required>
+                </div>
+                <div class="form-group">
+                    <label for="donation-date">Date:</label>
+                    <input type="date" id="donation-date" required>
+                </div>
+                <div class="form-group">
+                    <label for="donation-comment">Comment (optional):</label>
+                    <textarea id="donation-comment" rows="2"></textarea>
+                </div>
+                <button type="submit" class="btn primary">Add</button>
+            </form>
+        </section>
+        
+        <!-- <section class="chart-section">
+            <div class="chart-container">
+                <h2><i class="fas fa-chart-bar"></i> Summary</h2>
+                <canvas id="donation-chart"></canvas>
+            </div>
+        </section> -->
+        
+        <section class="history-section">
+            <h2><i class="fas fa-history"></i> History</h2>
+            <div class="date-filter">
+                <label for="start-date">From:</label>
+                <input type="date" id="start-date">
+                <label for="end-date">To:</label>
+                <input type="date" id="end-date">
+                <button id="filter-button" class="btn secondary">Filter</button>
+                <button id="reset-filter" class="btn secondary">Reset</button>
+            </div>
+            <div class="donation-list" id="donation-list">
+                <!-- Donation history will be populated here -->
+                <div class="donation-item placeholder">
+                    <p>Loading contribution history...</p>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- <footer>
+        <p>Track your impact. Every donation counts.</p>
+    </footer> -->
+
+    <script src="script.js"></script>
+</body>
+</html>
