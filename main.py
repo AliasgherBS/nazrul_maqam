@@ -1,53 +1,66 @@
 from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine, Column, Integer, Float, String, Boolean, Date, DateTime, ForeignKey, func
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session, relationship
-from pydantic import BaseModel
-from typing import List, Optional
+from motor.motor_asyncio import AsyncIOMotorClient
+from bson import ObjectId
+from pydantic import BaseModel, Field
+from typing import List, Optional, Any
 from datetime import datetime, date, timedelta
 import traceback
+import os
+from dotenv import load_dotenv
+import pytz
 
-# Database setup
-SQLALCHEMY_DATABASE_URL = "sqlite:///./donation_tracker.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+# Load environment variables
+load_dotenv()
 
-# Models
-class User(Base):
-    __tablename__ = "users"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    daily_amount = Column(Float, default=1.0)
-    
-    donations = relationship("Donation", back_populates="user")
+# MongoDB Connection Details
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+DB_NAME = os.getenv("DB_NAME", "nazrul_maqam_tracker")
 
-class Donation(Base):
-    __tablename__ = "donations"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
-    date = Column(Date, default=datetime.utcnow().date)
-    amount = Column(Float)
-    is_automatic = Column(Boolean, default=False)
-    comment = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    user = relationship("User", back_populates="donations")
-
-# Create tables
-Base.metadata.create_all(bind=engine)
-
-# Dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# PyObjectId for MongoDB ObjectId handling
+class PyObjectId(ObjectId):
+    @classmethod
+    def __get_validators__(cls):
+        yield cls.validate
+        
+    @classmethod
+    def validate(cls, v):
+        if not ObjectId.is_valid(v):
+            raise ValueError("Invalid ObjectId")
+        return ObjectId(v)
+        
+    @classmethod
+    def __get_pydantic_json_schema__(cls, _schema_generator, _field_schema):
+        return {"type": "string"}
 
 # Pydantic models
+class UserModel(BaseModel):
+    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    daily_amount: float = 38.0
+    
+    model_config = {
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True,
+        "json_schema_extra": {"example": {"daily_amount": 38.0}},
+        "json_encoders": {ObjectId: str}
+    }
+
+class UserUpdate(BaseModel):
+    daily_amount: float
+    
+    model_config = {
+        "arbitrary_types_allowed": True, 
+        "json_encoders": {ObjectId: str}
+    }
+
+class UserResponse(BaseModel):
+    id: int = 1  # Keep the same response format as SQLAlchemy
+    daily_amount: float
+    
+    model_config = {
+        "arbitrary_types_allowed": True
+    }
+
 class DonationBase(BaseModel):
     amount: float
     date: Optional[str] = None  # Changed from date to str for better compatibility
@@ -57,28 +70,32 @@ class DonationBase(BaseModel):
 class DonationCreate(DonationBase):
     pass
 
+class DonationModel(BaseModel):
+    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    user_id: str = "default_user"
+    date: str  # Store as ISO string
+    amount: float
+    is_automatic: bool = False
+    comment: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    model_config = {
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True,
+        "json_encoders": {ObjectId: str}
+    }
+
 class DonationResponse(BaseModel):
-    id: int
+    id: int  # Keep the same response format for compatibility
     date: date
     amount: float
     is_automatic: bool 
     comment: Optional[str] = None
     created_at: datetime
     
-    class Config:
-        orm_mode = True
-
-class UserBase(BaseModel):
-    daily_amount: float
-
-class UserUpdate(UserBase):
-    pass
-
-class UserResponse(UserBase):
-    id: int
-    
-    class Config:
-        orm_mode = True
+    model_config = {
+        "arbitrary_types_allowed": True
+    }
 
 class DonationSummary(BaseModel):
     total_all_time: float
@@ -91,7 +108,11 @@ class AutoDonateResponse(BaseModel):
     count: int
 
 # FastAPI app
-app = FastAPI(title="Charity Donation Tracker API")
+app = FastAPI(title="Nazrul Maqam Tracker API")
+
+# Database connection
+client = None
+db = None
 
 # CORS middleware - Enable all origins
 app.add_middleware(
@@ -102,105 +123,172 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create default user if doesn't exist
+# Events
 @app.on_event("startup")
-async def startup_event():
-    db = SessionLocal()
+async def startup_db_client():
+    global client, db
+    client = AsyncIOMotorClient(MONGODB_URI)
+    db = client[DB_NAME]
+    
+    # Create default user if not exists
+    default_user = await db.users.find_one({"user_id": "default_user"})
+    if not default_user:
+        await db.users.insert_one({"user_id": "default_user", "daily_amount": 38.0})
+        print("Created default user with daily amount of 38.0")
+
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    global client
+    if client:
+        client.close()
+
+# Helper functions
+def parse_date_string(date_str):
+    """Parse a date string to a date object."""
+    if not date_str:
+        return datetime.utcnow().date()
     try:
-        user = db.query(User).filter(User.id == 1).first()
-        if not user:
-            db.add(User(id=1, daily_amount=38.0))  # Default amount is 38
-            db.commit()
-            print("Created default user with daily amount of 38.0")
-    finally:
-        db.close()
+        return datetime.strptime(date_str, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+def format_donation_response(donation_doc):
+    """Format a MongoDB donation document to match the expected response format."""
+    # Convert string date to date object
+    if isinstance(donation_doc["date"], str):
+        date_obj = datetime.strptime(donation_doc["date"], "%Y-%m-%d").date()
+    else:
+        date_obj = donation_doc["date"]
+    
+    # Handle created_at datetime
+    if isinstance(donation_doc["created_at"], str):
+        created_at = datetime.fromisoformat(donation_doc["created_at"].replace('Z', '+00:00'))
+    else:
+        created_at = donation_doc["created_at"]
+    
+    # Generate sequential ID to match the SQL format 
+    # (using the last 6 digits of the ObjectId for simplicity)
+    id_num = int(str(donation_doc["_id"])[-6:], 16) % 1000000  
+
+    return {
+        "id": id_num,
+        "date": date_obj,
+        "amount": donation_doc["amount"],
+        "is_automatic": donation_doc["is_automatic"],
+        "comment": donation_doc.get("comment"),
+        "created_at": created_at
+    }
 
 # Endpoints
 @app.get("/api/user", response_model=UserResponse)
-def get_user(db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == 1).first()
+async def get_user():
+    user = await db.users.find_one({"user_id": "default_user"})
     if not user:
         print("User not found")
         raise HTTPException(status_code=404, detail="User not found")
-    return user
+    return {"id": 1, "daily_amount": user["daily_amount"]}
 
 @app.put("/api/user/settings", response_model=UserResponse)
-def update_settings(user_update: UserUpdate, db: Session = Depends(get_db)):
+async def update_settings(user_update: UserUpdate):
     try:
-        user = db.query(User).filter(User.id == 1).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
         if user_update.daily_amount < 0:
             raise HTTPException(status_code=400, detail="Daily amount cannot be negative")
         
-        user.daily_amount = user_update.daily_amount
-        db.commit()
-        db.refresh(user)
-        return user
+        update_result = await db.users.update_one(
+            {"user_id": "default_user"}, 
+            {"$set": {"daily_amount": user_update.daily_amount}}
+        )
+        
+        if update_result.modified_count == 0:
+            # If no document was updated, check if it exists
+            user = await db.users.find_one({"user_id": "default_user"})
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+        
+        # Return updated user
+        user = await db.users.find_one({"user_id": "default_user"})
+        return {"id": 1, "daily_amount": user["daily_amount"]}
+    
     except Exception as e:
-        db.rollback()
         print(f"Error updating settings: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
 
 @app.get("/api/donations", response_model=List[DonationResponse])
-def get_donations(
+async def get_donations(
     start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
-    db: Session = Depends(get_db)
+    end_date: Optional[date] = None
 ):
     try:
-        query = db.query(Donation).filter(Donation.user_id == 1)
+        # Build query
+        query = {"user_id": "default_user"}
         
-        if start_date:
-            query = query.filter(Donation.date >= start_date)
-        if end_date:
-            query = query.filter(Donation.date <= end_date)
+        if start_date or end_date:
+            date_query = {}
+            if start_date:
+                date_query["$gte"] = start_date.isoformat()
+            if end_date:
+                date_query["$lte"] = end_date.isoformat()
+            if date_query:
+                query["date"] = date_query
         
-        return query.order_by(Donation.date.desc()).all()
+        # Fetch donations
+        donations = []
+        async for doc in db.donations.find(query).sort("date", -1):  # Descending order by date
+            donations.append(format_donation_response(doc))
+        
+        return donations
+    
     except Exception as e:
         print(f"Error getting donations: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error retrieving donations: {str(e)}")
 
 @app.get("/api/donations/summary", response_model=DonationSummary)
-def get_summary(db: Session = Depends(get_db)):
+async def get_summary():
     try:
         today = datetime.utcnow().date()
         
         # Total all-time
-        total_all_time = db.query(func.sum(Donation.amount)).filter(
-            Donation.user_id == 1
-        ).scalar() or 0
+        cursor = db.donations.find({"user_id": "default_user"})
+        total_all_time = 0
+        async for doc in cursor:
+            total_all_time += doc["amount"]
         
         # Total this month
         first_day_of_month = today.replace(day=1)
-        total_this_month = db.query(func.sum(Donation.amount)).filter(
-            Donation.user_id == 1,
-            Donation.date >= first_day_of_month
-        ).scalar() or 0
+        cursor = db.donations.find({
+            "user_id": "default_user",
+            "date": {"$gte": first_day_of_month.isoformat()}
+        })
+        total_this_month = 0
+        async for doc in cursor:
+            total_this_month += doc["amount"]
         
         # Total this year
         first_day_of_year = today.replace(month=1, day=1)
-        total_this_year = db.query(func.sum(Donation.amount)).filter(
-            Donation.user_id == 1,
-            Donation.date >= first_day_of_year
-        ).scalar() or 0
+        cursor = db.donations.find({
+            "user_id": "default_user",
+            "date": {"$gte": first_day_of_year.isoformat()}
+        })
+        total_this_year = 0
+        async for doc in cursor:
+            total_this_year += doc["amount"]
         
         summary = {
-            "total_all_time": round(total_all_time or 0, 2),
-            "total_this_month": round(total_this_month or 0, 2),
-            "total_this_year": round(total_this_year or 0, 2)
+            "total_all_time": round(total_all_time, 2),
+            "total_this_month": round(total_this_month, 2),
+            "total_this_year": round(total_this_year, 2)
         }
         
         print(f"Generated summary: {summary}")
         return summary
+    
     except Exception as e:
         print(f"Error in get_summary: {str(e)}")
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Error generating summary")
     
 @app.post("/api/donations", response_model=DonationResponse)
-def add_donation(donation: DonationCreate, db: Session = Depends(get_db)):
+async def add_donation(donation: DonationCreate):
     try:
         if donation.amount <= 0:
             raise HTTPException(status_code=400, detail="Amount must be greater than zero")
@@ -209,32 +297,40 @@ def add_donation(donation: DonationCreate, db: Session = Depends(get_db)):
         donation_date = None
         if donation.date:
             try:
-                # Convert string date to date object
-                donation_date = datetime.strptime(donation.date, "%Y-%m-%d").date()
+                # Parse and validate date
+                donation_date = parse_date_string(donation.date)
             except ValueError:
                 raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
         else:
             donation_date = datetime.utcnow().date()
         
-        db_donation = Donation(
-            user_id=1,
-            date=donation_date,
-            amount=donation.amount,
-            is_automatic=donation.is_automatic,
-            comment=donation.comment
-        )
+        # Create donation document
+        created_at = datetime.utcnow()
+        new_donation = {
+            "user_id": "default_user",
+            "date": donation_date.isoformat(),
+            "amount": donation.amount,
+            "is_automatic": donation.is_automatic,
+            "comment": donation.comment,
+            "created_at": created_at
+        }
         
-        db.add(db_donation)
-        db.commit()
-        db.refresh(db_donation)
+        # Insert into database
+        result = await db.donations.insert_one(new_donation)
         
-        print(f"Added donation: id={db_donation.id}, amount={donation.amount}, date={donation_date}")
-        return db_donation
+        # Get the inserted document
+        doc = await db.donations.find_one({"_id": result.inserted_id})
+        
+        # Format for response
+        response_data = format_donation_response(doc)
+        
+        print(f"Added donation: id={result.inserted_id}, amount={donation.amount}, date={donation_date}")
+        return response_data
+    
     except HTTPException as he:
         # Re-raise HTTP exceptions directly
         raise he
     except Exception as e:
-        db.rollback()
         error_msg = str(e)
         print(f"Error adding donation: {error_msg}")
         print(traceback.format_exc())
@@ -242,57 +338,73 @@ def add_donation(donation: DonationCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/auto-donate", response_model=AutoDonateResponse)
-def auto_donate(db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == 1).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    today = datetime.utcnow().date()
-    
-    # Get the latest automatic donation date
-    latest_donation = db.query(Donation).filter(
-        Donation.user_id == 1,
-        Donation.is_automatic == True
-    ).order_by(Donation.date.desc()).first()
-    
-    start_date = latest_donation.date + timedelta(days=1) if latest_donation else today
-    
-    # Don't add future donations
-    if start_date > today:
-        return {"success": True, "message": "No donations needed", "count": 0}
-    
-    # Add daily donations for each missing day
-    donations_added = 0
-    current_date = start_date
-    
-    while current_date <= today:
-        # Check if an automatic donation already exists for this date
-        existing = db.query(Donation).filter(
-            Donation.user_id == 1,
-            Donation.date == current_date,
-            Donation.is_automatic == True
-        ).first()
+async def auto_donate():
+    try:
+        # Get user
+        user = await db.users.find_one({"user_id": "default_user"})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
         
-        if not existing:
-            donation = Donation(
-                user_id=1,
-                date=current_date,
-                amount=user.daily_amount,
-                is_automatic=True,
-                comment="Automatic daily contribution"
-            )
-            db.add(donation)
-            donations_added += 1
+        daily_amount = user["daily_amount"]
+        today = datetime.utcnow().date()
+        
+        # Get the latest automatic donation date
+        latest_auto = await db.donations.find_one(
+            {"user_id": "default_user", "is_automatic": True},
+            sort=[("date", -1)]
+        )
+        
+        # Determine start date
+        start_date = None
+        if latest_auto:
+            if isinstance(latest_auto["date"], str):
+                latest_date = datetime.strptime(latest_auto["date"], "%Y-%m-%d").date()
+            else:
+                latest_date = latest_auto["date"]
+            start_date = latest_date + timedelta(days=1)
+        else:
+            start_date = today
+        
+        # Don't add future donations
+        if start_date > today:
+            return {"success": True, "message": "No donations needed", "count": 0}
+        
+        # Add daily donations for each missing day
+        donations_added = 0
+        current_date = start_date
+        
+        while current_date <= today:
+            # Check if an automatic donation already exists for this date
+            existing = await db.donations.find_one({
+                "user_id": "default_user",
+                "date": current_date.isoformat(),
+                "is_automatic": True
+            })
             
-        current_date += timedelta(days=1)
+            if not existing:
+                donation = {
+                    "user_id": "default_user",
+                    "date": current_date.isoformat(),
+                    "amount": daily_amount,
+                    "is_automatic": True,
+                    "comment": "Automatic daily contribution",
+                    "created_at": datetime.utcnow()
+                }
+                await db.donations.insert_one(donation)
+                donations_added += 1
+                
+            current_date += timedelta(days=1)
+        
+        return {
+            "success": True,
+            "message": f"Added {donations_added} automatic donations",
+            "count": donations_added
+        }
     
-    db.commit()
-    
-    return {
-        "success": True,
-        "message": f"Added {donations_added} automatic donations",
-        "count": donations_added
-    }
+    except Exception as e:
+        print(f"Error in auto-donate: {str(e)}")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error in auto-donate: {str(e)}")
 
 # Health check endpoint
 @app.get("/api/health")
@@ -302,5 +414,5 @@ def health_check():
 # If running as script, start the server
 if __name__ == "__main__":
     import uvicorn
-    print("Starting Charity Donation Tracker API server")
+    print("Starting Nazrul Maqam Tracker API server")
     uvicorn.run(app, host="0.0.0.0", port=8000)
