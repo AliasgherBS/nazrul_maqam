@@ -1,6 +1,5 @@
 from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
@@ -417,6 +416,31 @@ def health_check():
 @app.get("/")
 async def serve_website():
     return FileResponse("index.html")
+
+# Static file endpoints
+@app.get("/styles.css")
+async def serve_css():
+    return FileResponse("styles.css", media_type="text/css")
+
+@app.get("/script.js")
+async def serve_js():
+    return FileResponse("script.js", media_type="application/javascript")
+
+@app.get("/apple-touch-icon.png")
+async def serve_apple_touch_icon():
+    return FileResponse("apple-touch-icon.png", media_type="image/png")
+
+@app.get("/favicon-32x32.png")
+async def serve_favicon_32():
+    return FileResponse("favicon-32x32.png", media_type="image/png")
+
+@app.get("/favicon-16x16.png")
+async def serve_favicon_16():
+    return FileResponse("favicon-16x16.png", media_type="image/png")
+
+@app.get("/site.webmanifest")
+async def serve_webmanifest():
+    return FileResponse("site.webmanifest", media_type="application/manifest+json")
 
 # If running as script, start the server
 if __name__ == "__main__":
