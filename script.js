@@ -3,7 +3,7 @@
 //     ? `${window.location.protocol}//${window.location.hostname}:8000/api` 
 //     : 'http://localhost:8000/api';
 
-const API_BASE_URL = 'https://nazrulmaqam-production.up.railway.app/api';
+const API_BASE_URL = 'https://nazrul-maqam.onrender.com/api';
 
     // DOM Elements
 document.addEventListener('DOMContentLoaded', () => {

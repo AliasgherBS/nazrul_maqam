@@ -1,5 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 from pydantic import BaseModel, Field
@@ -410,6 +412,11 @@ async def auto_donate():
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+
+# Root endpoint to serve the website
+@app.get("/")
+async def serve_website():
+    return FileResponse("index.html")
 
 # If running as script, start the server
 if __name__ == "__main__":
